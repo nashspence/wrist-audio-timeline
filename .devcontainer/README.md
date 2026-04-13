@@ -4,6 +4,8 @@ This devcontainer is configured for Docker outside of Docker.
 
 That means the devcontainer does not run its own inner Docker daemon. Instead, it uses the host Docker daemon through the official `docker-outside-of-docker` dev container feature.
 
+In this environment there is also an inner Docker daemon available at `/var/run/docker.sock`, but the intended default for `docker` and `docker compose` is the host daemon at `/run/docker-host.sock`.
+
 ## Workspace Path Mapping
 
 Inside the devcontainer, this repository is mounted at:
