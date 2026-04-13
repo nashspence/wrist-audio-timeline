@@ -62,12 +62,6 @@ class Severity(StrEnum):
     ERROR = "error"
 
 
-class RecordFamily(StrEnum):
-    CAPTURE_SESSION = "capture_session"
-    SENSOR_STREAM = "sensor_stream"
-    ARTIFACT = "artifact"
-
-
 class TimelineObjectFamily(StrEnum):
     OBSERVATION = "observation"
     EVIDENCE = "evidence"
@@ -100,6 +94,9 @@ class ArtifactFormat(StrEnum):
     AAC = "aac"
     PCM = "pcm"
     JSON = "json"
+    NDJSON = "ndjson"
+    CSV = "csv"
+    PROTOBUF = "protobuf"
     PARQUET = "parquet"
     OTHER = "other"
 
@@ -273,8 +270,13 @@ class RelativeSpan(StrictBaseModel):
     def _validate_relative_span(self) -> "RelativeSpan":
         if self.end_offset_s <= self.start_offset_s:
             raise ValueError("end_offset_s must be greater than start_offset_s")
-        self.duration_s = self.end_offset_s - self.start_offset_s
-        self.center_offset_s = self.start_offset_s + (self.duration_s / 2.0)
+        duration_s = self.end_offset_s - self.start_offset_s
+        object.__setattr__(self, "duration_s", duration_s)
+        object.__setattr__(
+            self,
+            "center_offset_s",
+            self.start_offset_s + (duration_s / 2.0),
+        )
         return self
 
 
@@ -286,12 +288,16 @@ TemporalExtent = Annotated[
 
 class AudioProperties(StrictBaseModel):
     sample_rate_hz: int = Field(gt=0)
-    channels: int = Field(gt=0)
+    channel_count: int = Field(gt=0)
 
 
 class StreamRef(StrictBaseModel):
     stream_id: str
     relation: str | None = None
+
+
+class ArtifactStreamRef(StreamRef):
+    is_primary: bool = False
 
 
 class ArtifactRef(StrictBaseModel):
@@ -340,7 +346,7 @@ class WallClockEstimate(StrictBaseModel):
 
 
 # ============================================================
-# Capture roots
+# Root records
 # ============================================================
 
 
@@ -354,7 +360,6 @@ class CaptureSessionMetadata(StrictBaseModel):
 class CaptureSession(StrictBaseModel):
     schema_version: str = Field(default=SCHEMA_VERSION)
     kind: Literal["capture_session"] = "capture_session"
-    family: Literal[RecordFamily.CAPTURE_SESSION] = RecordFamily.CAPTURE_SESSION
 
     session_id: str
     duration_s: float | None = Field(default=None, gt=0.0)
@@ -377,7 +382,6 @@ class SensorStreamMetadata(StrictBaseModel):
 class SensorStream(StrictBaseModel):
     schema_version: str = Field(default=SCHEMA_VERSION)
     kind: Literal["sensor_stream"] = "sensor_stream"
-    family: Literal[RecordFamily.SENSOR_STREAM] = RecordFamily.SENSOR_STREAM
 
     stream_id: str
     session_id: str
@@ -387,7 +391,7 @@ class SensorStream(StrictBaseModel):
     name: str | None = None
 
     duration_s: float | None = Field(default=None, gt=0.0)
-    nominal_rate_hz: float | None = Field(default=None, gt=0.0)
+    nominal_sample_rate_hz: float | None = Field(default=None, gt=0.0)
 
     timebase: TimebaseRef
     audio: AudioProperties
@@ -401,17 +405,17 @@ class ArtifactMetadata(StrictBaseModel):
 class Artifact(StrictBaseModel):
     schema_version: str = Field(default=SCHEMA_VERSION)
     kind: Literal["artifact"] = "artifact"
-    family: Literal[RecordFamily.ARTIFACT] = RecordFamily.ARTIFACT
 
     artifact_id: str
     session_id: str
-    stream_id: str | None = None
+    modality: Literal[Modality.AUDIO] = Modality.AUDIO
+    stream_refs: list[ArtifactStreamRef] = Field(default_factory=list)
 
     artifact_role: ArtifactRole
     uri: str
     sha256: str | None = None
     mime_type: str | None = None
-    format: ArtifactFormat | None = None
+    artifact_format: ArtifactFormat | None = None
     byte_size: int | None = Field(default=None, ge=0)
 
     start_offset_s: NonNegativeFloat | None = None
@@ -428,6 +432,13 @@ class Artifact(StrictBaseModel):
             and self.end_offset_s <= self.start_offset_s
         ):
             raise ValueError("end_offset_s must be greater than start_offset_s")
+
+        if len({ref.stream_id for ref in self.stream_refs}) != len(self.stream_refs):
+            raise ValueError("artifact stream_refs must not repeat the same stream_id")
+
+        if sum(1 for ref in self.stream_refs if ref.is_primary) > 1:
+            raise ValueError("artifact stream_refs may mark at most one primary stream")
+
         return self
 
 
@@ -692,19 +703,21 @@ class AudioSoundEventSegmentEvidence(EvidenceBase):
 # ============================================================
 
 
-class AvgAudioProfile(StrictBaseModel):
-    rms_dbfs: float | None = None
-    estimated_snr_db: float | None = None
-    speech_ratio: UnitScore | None = None
+class AudioProfileSummary(StrictBaseModel):
+    avg_rms_dbfs: float | None = None
+    avg_estimated_snr_db: float | None = None
+    avg_speech_ratio: UnitScore | None = None
 
 
 class ContextSegmentPayload(StrictBaseModel):
-    summary: str | None = None
-    dominant_acoustic_scene_tags: list[TagScore] = Field(default_factory=list)
-    dominant_sound_event_tags: list[TagScore] = Field(default_factory=list)
-    speech_presence_profile: SpeechPresence | None = None
-    avg_groundedness_score: UnitScore | None = None
-    avg_audio_profile: AvgAudioProfile = Field(default_factory=AvgAudioProfile)
+    short_caption: str | None = None
+    detailed_summary: str | None = None
+    acoustic_scene_tags: list[TagScore] = Field(default_factory=list)
+    sound_event_tags: list[TagScore] = Field(default_factory=list)
+    speech_presence: SpeechPresence | None = None
+    uncertainty_notes: list[str] = Field(default_factory=list)
+    groundedness_score: UnitScore | None = None
+    audio_profile: AudioProfileSummary = Field(default_factory=AudioProfileSummary)
     supporting_objects: list[ObjectRef] = Field(default_factory=list)
 
 
@@ -718,7 +731,7 @@ class ContextChangeMarkerPayload(StrictBaseModel):
 
 
 class QualityBinPayload(StrictBaseModel):
-    metrics: dict[str, float | None] = Field(default_factory=dict)
+    metrics: dict[str, float] = Field(default_factory=dict)
     usability: dict[str, UnitScore] = Field(default_factory=dict)
     flags: list[ReasonCode] = Field(default_factory=list)
 
@@ -906,11 +919,12 @@ class SessionBundle(StrictBaseModel):
                 )
             if artifact.artifact_id in artifact_index:
                 raise ValueError(f"duplicate artifact_id: {artifact.artifact_id}")
-            if artifact.stream_id is not None and artifact.stream_id not in stream_index:
-                raise ValueError(
-                    f"artifact {artifact.artifact_id} references unknown stream_id "
-                    f"{artifact.stream_id}"
-                )
+            for stream_ref in artifact.stream_refs:
+                if stream_ref.stream_id not in stream_index:
+                    raise ValueError(
+                        f"artifact {artifact.artifact_id} references unknown stream_id "
+                        f"{stream_ref.stream_id}"
+                    )
             artifact_index[artifact.artifact_id] = artifact
 
         estimates: list[WallClockEstimate] = []

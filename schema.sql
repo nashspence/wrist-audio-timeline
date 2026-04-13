@@ -1,12 +1,12 @@
--- Strictly normalized PostgreSQL schema for the wrist-worn timeline pipeline.
+-- Normalized PostgreSQL persistence schema for the wrist-audio timeline model.
 --
 -- Design goals:
--- 1) Keep the relational core audio-focused now, but easy to extend later.
+-- 1) Keep the runtime scope audio-focused now, while leaving the relational core easy to extend.
 -- 2) Store evolving vocabularies in lookup catalogs instead of hard-coded enums/checks.
--- 3) Preserve typed refs, lineage, and end-of-pipeline durable payloads.
+-- 3) Preserve typed refs, lineage, and durable payloads needed for downstream retrieval.
 -- 4) Separate generic supertypes from audio-specific subtype tables.
--- 5) Keep dense/intermediate observations and evidence optional as object headers,
---    while persisting durable derived/fusion payloads in normalized child tables.
+-- 5) Keep the canonical exchange schema and the persistence schema aligned in semantics,
+--    even when nested collections are decomposed into normalized child tables.
 
 create schema if not exists wrist_audio;
 set search_path = wrist_audio, public;
@@ -15,60 +15,131 @@ set search_path = wrist_audio, public;
 -- Stable domains and enums
 -- ============================================================
 
-create domain nonnegative_double as double precision
-    check (value >= 0.0);
+do $$
+begin
+    if to_regtype('wrist_audio.nonnegative_double') is null then
+        execute 'create domain wrist_audio.nonnegative_double as double precision check (value >= 0.0)';
+    end if;
+end
+$$;
 
-create domain positive_double as double precision
-    check (value > 0.0);
+do $$
+begin
+    if to_regtype('wrist_audio.positive_double') is null then
+        execute 'create domain wrist_audio.positive_double as double precision check (value > 0.0)';
+    end if;
+end
+$$;
 
-create domain unit_score as double precision
-    check (value >= 0.0 and value <= 1.0);
+do $$
+begin
+    if to_regtype('wrist_audio.unit_score') is null then
+        execute 'create domain wrist_audio.unit_score as double precision check (value >= 0.0 and value <= 1.0)';
+    end if;
+end
+$$;
 
-create type severity as enum (
-    'info',
-    'warning',
-    'error'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.severity') is null then
+        execute $enum$
+            create type wrist_audio.severity as enum (
+                'info',
+                'warning',
+                'error'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type timeline_object_family as enum (
-    'observation',
-    'evidence',
-    'derived',
-    'fusion'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.timeline_object_family') is null then
+        execute $enum$
+            create type wrist_audio.timeline_object_family as enum (
+                'observation',
+                'evidence',
+                'derived',
+                'fusion'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type time_kind as enum (
-    'relative_instant',
-    'relative_span'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.time_kind') is null then
+        execute $enum$
+            create type wrist_audio.time_kind as enum (
+                'relative_instant',
+                'relative_span'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type grid_kind as enum (
-    'regular_bins',
-    'sliding_windows',
-    'other'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.grid_kind') is null then
+        execute $enum$
+            create type wrist_audio.grid_kind as enum (
+                'regular_bins',
+                'sliding_windows',
+                'other'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type clock_source as enum (
-    'device_monotonic',
-    'server_ingest',
-    'manual',
-    'derived'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.clock_source') is null then
+        execute $enum$
+            create type wrist_audio.clock_source as enum (
+                'device_monotonic',
+                'server_ingest',
+                'manual',
+                'derived'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type wall_clock_estimate_source as enum (
-    'device_file_mtime',
-    'device_metadata',
-    'user_declared',
-    'server_ingest',
-    'derived'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.wall_clock_estimate_source') is null then
+        execute $enum$
+            create type wrist_audio.wall_clock_estimate_source as enum (
+                'device_file_mtime',
+                'device_metadata',
+                'user_declared',
+                'server_ingest',
+                'derived'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
-create type wall_clock_estimate_quality as enum (
-    'trusted',
-    'approximate',
-    'weak',
-    'guessed'
-);
+do $$
+begin
+    if to_regtype('wrist_audio.wall_clock_estimate_quality') is null then
+        execute $enum$
+            create type wrist_audio.wall_clock_estimate_quality as enum (
+                'trusted',
+                'approximate',
+                'weak',
+                'guessed'
+            )
+        $enum$;
+    end if;
+end
+$$;
 
 -- ============================================================
 -- Vocabulary catalogs
@@ -213,6 +284,7 @@ create table if not exists session_wall_clock_candidate (
     timestamp_utc timestamptz not null,
     source wall_clock_estimate_source not null,
     quality wall_clock_estimate_quality not null,
+    is_primary boolean not null default false,
     uncertainty_before_s nonnegative_double not null default 0.0,
     uncertainty_after_s nonnegative_double not null default 0.0,
     rationale text,
@@ -407,6 +479,10 @@ create table if not exists timeline_object (
     start_offset_s nonnegative_double not null,
     end_offset_s nonnegative_double not null,
     grid_id text,
+    timebase_clock_source clock_source not null,
+    timebase_reference_stream_id text,
+    timebase_alignment_uncertainty_ms nonnegative_double,
+    timebase_sync_notes text,
     relative_time numrange generated always as (
         case
             when time_kind = 'relative_instant' then numrange(start_offset_s::numeric, start_offset_s::numeric, '[]')
@@ -424,6 +500,9 @@ create table if not exists timeline_object (
     foreign key (grid_id)
         references grid_definition (grid_id)
         on delete restrict,
+    foreign key (session_id, timebase_reference_stream_id)
+        references sensor_stream (session_id, stream_id)
+        deferrable initially deferred,
     check (
         (time_kind = 'relative_instant' and end_offset_s = start_offset_s)
         or
@@ -606,6 +685,9 @@ create table if not exists context_segment (
     detailed_summary text,
     speech_presence_code text,
     groundedness_score unit_score,
+    avg_rms_dbfs double precision,
+    avg_estimated_snr_db double precision,
+    avg_speech_ratio unit_score,
     primary key (session_id, object_id),
     foreign key (session_id, object_id)
         references timeline_object (session_id, object_id)
@@ -794,17 +876,18 @@ create table if not exists fused_interval_note (
 -- Trigger helpers for cross-table invariants
 -- ============================================================
 
-create or replace function assert_stream_modality(expected_modality text)
+create or replace function assert_stream_modality()
 returns trigger
 language plpgsql
 as $$
 declare
+    expected_modality text := tg_argv[0];
     actual_modality text;
 begin
     select sk.modality_code
       into actual_modality
-      from sensor_stream ss
-      join stream_kind sk
+      from wrist_audio.sensor_stream ss
+      join wrist_audio.stream_kind sk
         on sk.stream_kind_code = ss.stream_kind_code
      where ss.session_id = new.session_id
        and ss.stream_id = new.stream_id;
@@ -822,16 +905,17 @@ begin
 end;
 $$;
 
-create or replace function assert_artifact_modality(expected_modality text)
+create or replace function assert_artifact_modality()
 returns trigger
 language plpgsql
 as $$
 declare
+    expected_modality text := tg_argv[0];
     actual_modality text;
 begin
     select modality_code
       into actual_modality
-      from artifact
+      from wrist_audio.artifact
      where session_id = new.session_id
        and artifact_id = new.artifact_id;
 
@@ -848,16 +932,17 @@ begin
 end;
 $$;
 
-create or replace function assert_object_kind(expected_kind text)
+create or replace function assert_object_kind()
 returns trigger
 language plpgsql
 as $$
 declare
+    expected_kind text := tg_argv[0];
     actual_kind text;
 begin
     select kind_code
       into actual_kind
-      from timeline_object
+      from wrist_audio.timeline_object
      where session_id = new.session_id
        and object_id = new.object_id;
 
@@ -880,12 +965,12 @@ language plpgsql
 as $$
 declare
     actual_kind text;
-    actual_family timeline_object_family;
+    actual_family wrist_audio.timeline_object_family;
 begin
     select o.kind_code, ok.family
       into actual_kind, actual_family
-      from timeline_object o
-      join object_kind ok
+      from wrist_audio.timeline_object o
+      join wrist_audio.object_kind ok
         on ok.kind_code = o.kind_code
      where o.session_id = new.session_id
        and o.object_id = new.dst_object_id;
@@ -922,7 +1007,7 @@ begin
 
     select artifact_role_code
       into actual_role
-      from artifact
+      from wrist_audio.artifact
      where session_id = new.session_id
        and artifact_id = new.dst_artifact_id;
 
@@ -953,11 +1038,11 @@ begin
     end if;
 
     select modality_code into object_modality
-      from object_kind
+      from wrist_audio.object_kind
      where kind_code = new.kind_code;
 
     select modality_code into grid_modality
-      from grid_definition
+      from wrist_audio.grid_definition
      where grid_id = new.grid_id;
 
     if object_modality is null or grid_modality is null then
@@ -983,14 +1068,14 @@ declare
 begin
     select a.modality_code
       into artifact_modality
-      from artifact a
+      from wrist_audio.artifact a
      where a.session_id = new.session_id
        and a.artifact_id = new.artifact_id;
 
     select sk.modality_code
       into stream_modality
-      from sensor_stream ss
-      join stream_kind sk
+      from wrist_audio.sensor_stream ss
+      join wrist_audio.stream_kind sk
         on sk.stream_kind_code = ss.stream_kind_code
      where ss.session_id = new.session_id
        and ss.stream_id = new.stream_id;
@@ -1018,7 +1103,7 @@ declare
 begin
     select sk.modality_code
       into actual_modality
-      from stream_kind sk
+      from wrist_audio.stream_kind sk
      where sk.stream_kind_code = new.stream_kind_code;
 
     if actual_modality is null then
@@ -1027,7 +1112,12 @@ begin
 
     subtype_count := 0;
 
-    if exists (select 1 from audio_stream where session_id = new.session_id and stream_id = new.stream_id) then
+    if exists (
+        select 1
+          from wrist_audio.audio_stream
+         where session_id = new.session_id
+           and stream_id = new.stream_id
+    ) then
         subtype_count := subtype_count + 1;
     end if;
 
@@ -1256,6 +1346,10 @@ $$;
 create index if not exists capture_session_by_wearer
     on capture_session (wearer_id);
 
+create unique index if not exists session_wall_clock_candidate_one_primary
+    on session_wall_clock_candidate (session_id)
+    where is_primary;
+
 create index if not exists sensor_stream_by_kind
     on sensor_stream (stream_kind_code);
 
@@ -1274,6 +1368,10 @@ create index if not exists artifact_stream_ref_by_stream
 
 create index if not exists timeline_object_by_kind_start
     on timeline_object (session_id, kind_code, start_offset_s);
+
+create index if not exists timeline_object_by_timebase_stream
+    on timeline_object (session_id, timebase_reference_stream_id)
+    where timebase_reference_stream_id is not null;
 
 create index if not exists timeline_object_relative_time_gist
     on timeline_object using gist (relative_time);
@@ -1356,8 +1454,12 @@ join quality_bin qb
 -- Notes
 -- ============================================================
 -- 1) This schema intentionally keeps the durable current-state payload tables audio-focused,
---    while the core relational model is modality-agnostic.
--- 2) Additional modalities, stream kinds, artifact formats, object kinds, quality vocabularies,
+--    while the core relational model stays modality-extensible.
+-- 2) The canonical Python schema may represent some collections as nested lists or dicts;
+--    this persistence schema decomposes those into child tables without changing semantics.
+-- 3) `CaptureSession.wall_clock_start` maps to the `session_wall_clock_candidate` row with
+--    `is_primary = true` when a primary wall-clock estimate is persisted.
+-- 4) Additional modalities, stream kinds, artifact formats, object kinds, quality vocabularies,
 --    and grids are added by inserting catalog rows plus new subtype/payload tables as needed.
--- 3) If timeline_object or artifact grows very large, use declarative partitioning by session or
+-- 5) If timeline_object or artifact grows very large, use declarative partitioning by session or
 --    time window at the table level; the normalized catalog/core model remains unchanged.
