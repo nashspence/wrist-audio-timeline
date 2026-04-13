@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /workspaces/wrist-audio-pipeline
+cd /workspaces/services
 
 if [[ ! -f .env && -f .env.example ]]; then
   cp .env.example .env
