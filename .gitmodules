@@ -1,0 +1,27 @@
+[submodule "services/audio/audio-asr-service"]
+	path = services/audio/audio-asr-service
+	url = git@github.com:nashspence/audio-asr-service.git
+[submodule "services/audio/audio-sound-event-segmentation-service"]
+	path = services/audio/audio-sound-event-segmentation-service
+	url = git@github.com:nashspence/audio-sound-event-segmentation-service.git
+[submodule "services/audio/audio-quality-assessment-service"]
+	path = services/audio/audio-quality-assessment-service
+	url = git@github.com:nashspence/audio-quality-assessment-service.git
+[submodule "services/audio/audio-context-understanding-service"]
+	path = services/audio/audio-context-understanding-service
+	url = git@github.com:nashspence/audio-context-understanding-service.git
+[submodule "services/audio/audio-diarization-service"]
+	path = services/audio/audio-diarization-service
+	url = git@github.com:nashspence/audio-diarization-service.git
+[submodule "services/audio/audio-emotion-segmentation-service"]
+	path = services/audio/audio-emotion-segmentation-service
+	url = git@github.com:nashspence/audio-emotion-segmentation-service.git
+[submodule "services/audio/audio-asr-correction-service"]
+	path = services/audio/audio-asr-correction-service
+	url = git@github.com:nashspence/audio-asr-correction-service.git
+[submodule "services/audio/audio-speaker-identification-service"]
+	path = services/audio/audio-speaker-identification-service
+	url = git@github.com:nashspence/audio-speaker-identification-service.git
+[submodule "services/infrastructure/gpu-service-manager"]
+	path = services/infrastructure/gpu-service-manager
+	url = git@github.com:nashspence/gpu-service-manager.git

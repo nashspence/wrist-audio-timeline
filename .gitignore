@@ -1,13 +1,1 @@
-# Submodules
-/asr
-/atst-sed-service
-/audio-segment-quality-assessment
-/diarizen-service
-/emotion-diarization-service
-/gpu-service-manager
-/qwen-domain-correction-service
-/speech-enhancement-service
-/titanet-speaker-id-service
-/audio-understanding-service
 .env
-

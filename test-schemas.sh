@@ -156,7 +156,7 @@ context_window = schema.AudioContextWindowEvidence(
     session_id='session-1',
     kind='audio_context_window_evidence',
     modality='audio',
-    source_service='audio-understanding-service',
+    source_service='audio-context-understanding-service',
     confidence=schema.ConfidenceBundle(confidence_overall=0.8),
     temporal=schema.RelativeSpan(
         start_offset_s=0.0,
