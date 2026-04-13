@@ -4,28 +4,30 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
   "init": true,
-  "privileged": false,
-  "overrideCommand": false,
   "remoteUser": "codespace",
-  "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
-  ],
   "containerEnv": {
     "PIP_DISABLE_PIP_VERSION_CHECK": "1",
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONUNBUFFERED": "1",
     "UV_LINK_MODE": "copy",
     "NVIDIA_VISIBLE_DEVICES": "all",
-    "NVIDIA_DRIVER_CAPABILITIES": "all"
+    "NVIDIA_DRIVER_CAPABILITIES": "all",
+    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+  },
+  "remoteEnv": {
+    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
   },
   "runArgs": [
     "--gpus",
     "all",
     "--add-host",
     "host.docker.internal:host-gateway",
-    "--env-file", 
-    ".devcontainer/devcontainer.env"
+    "--env-file",
+    ".env"
   ],
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "updateContentCommand": "bash .devcontainer/post-create.sh",

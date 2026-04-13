@@ -9,5 +9,5 @@
 /speech-enhancement-service
 /titanet-speaker-id-service
 /audio-understanding-service
-devcontainer.env
 .env
+

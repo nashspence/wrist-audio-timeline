@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR=/workspaces/services
-HOST_DIR="${DIND_HOST_DIRECTORY:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR}"
+HOST_DIR="${ROOT_DIR}"
+if [[ -n "${LOCAL_WORKSPACE_FOLDER:-}" ]] \
+  && [[ -d "${LOCAL_WORKSPACE_FOLDER}" ]] \
+  && [[ -f "${LOCAL_WORKSPACE_FOLDER}/schema.py" ]] \
+  && [[ -f "${LOCAL_WORKSPACE_FOLDER}/schema.sql" ]]; then
+  HOST_DIR="${LOCAL_WORKSPACE_FOLDER}"
+fi
 PYTHON_IMAGE=python:3.12-slim
 POSTGRES_IMAGE=postgres:16
 POSTGRES_CONTAINER="wrist-audio-schema-test-postgres"
@@ -55,12 +62,6 @@ require_cmd docker
 require_cmd python3
 require_cmd psql
 
-if [[ -z "${HOST_DIR}" && -f "${ROOT_DIR}/.devcontainer/devcontainer.env" ]]; then
-  HOST_DIR="$(awk -F= '$1 == "DIND_HOST_DIRECTORY" {print substr($0, index($0, "=") + 1)}' \
-    "${ROOT_DIR}/.devcontainer/devcontainer.env")"
-fi
-
-[[ -n "${HOST_DIR}" ]] || fail "DIND_HOST_DIRECTORY is not set"
 [[ -f "${ROOT_DIR}/schema.py" ]] || fail "schema.py not found in ${ROOT_DIR}"
 [[ -f "${ROOT_DIR}/schema.sql" ]] || fail "schema.sql not found in ${ROOT_DIR}"
 [[ -S /var/run/docker.sock ]] || fail "docker socket is not available"
