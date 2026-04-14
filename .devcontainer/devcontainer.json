@@ -15,8 +15,7 @@
     "PYTHONUNBUFFERED": "1",
     "UV_LINK_MODE": "copy",
     "NVIDIA_VISIBLE_DEVICES": "all",
-    "NVIDIA_DRIVER_CAPABILITIES": "all",
-    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+    "NVIDIA_DRIVER_CAPABILITIES": "all"
   },
   "runArgs": [
     "--gpus",
