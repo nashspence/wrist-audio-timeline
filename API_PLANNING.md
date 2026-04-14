@@ -72,7 +72,7 @@ For long files:
 | DSP | custom DSP | Dense 500 ms low-level signal features | primary audio artifact | DSP bins, optional feature shard artifact | CPU | must stream incrementally |
 | ASR | `parakeet-tdt` | Transcript evidence | primary audio artifact | word/phrase transcript evidence, transcript artifact | GPU | supports word boosting |
 | Diarization | `BUT-FIT/diarizen-wavlm-large-s80-md-v2` | Speaker-homogeneous spans | primary audio artifact | diarization span evidence | GPU | basis for speaker-aware emotion |
-| Speaker ID | `titanet` | Map speakers to enrolled identities | diarization spans, audio, enrolled speakers | speaker identity claims | GPU | optional if no enrollment |
+| Speaker ID | `nvidia/speakerverification_en_titanet_large` | Map speakers to enrolled identities | diarization spans, audio, enrolled speakers | speaker identity claims | GPU | optional if no enrollment |
 | ASR correction | `Qwen/Qwen3-14B-AWQ` | Correct spelling and normalize transcript spans | transcript phrases, optional domain hints | correction evidence, optional corrected transcript artifact | GPU | must preserve original ASR text |
 | SED | `atst_as2M.ckpt` + `Stage2_wo_ext.ckpt` | Non-speech and environment events | primary audio artifact | SED event spans, optional native output artifact | GPU | context layer only |
 | Context windows | `Qwen/Qwen2.5-Omni-7B` | Coarse semantic scene windows | primary audio artifact, fixed 30 s / 15 s windows | context observations, optional raw output artifact | GPU | broad prior, not final segmentation |
