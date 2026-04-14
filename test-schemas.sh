@@ -3,13 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="${SCRIPT_DIR}"
-HOST_DIR="${ROOT_DIR}"
-if [[ -n "${LOCAL_WORKSPACE_FOLDER:-}" ]] \
-  && [[ -d "${LOCAL_WORKSPACE_FOLDER}" ]] \
-  && [[ -f "${LOCAL_WORKSPACE_FOLDER}/schema.py" ]] \
-  && [[ -f "${LOCAL_WORKSPACE_FOLDER}/schema.sql" ]]; then
-  HOST_DIR="${LOCAL_WORKSPACE_FOLDER}"
-fi
 PYTHON_IMAGE=python:3.12-slim
 POSTGRES_IMAGE=postgres:16
 POSTGRES_CONTAINER="wrist-audio-schema-test-postgres"
@@ -66,16 +59,16 @@ require_cmd psql
 [[ -f "${ROOT_DIR}/schema.sql" ]] || fail "schema.sql not found in ${ROOT_DIR}"
 [[ -S /var/run/docker.sock ]] || fail "docker socket is not available"
 
-log "Checking Docker outside of Docker workspace mapping"
+log "Checking Docker-in-Docker workspace mapping"
 docker run --rm \
-  -v "${HOST_DIR}:/workspace:ro" \
+  -v "${ROOT_DIR}:/workspace:ro" \
   -w /workspace \
   alpine:3.22 \
   sh -lc 'test -f schema.py && test -f schema.sql'
 
 log "Validating schema.py in a clean Python container"
 docker run --rm \
-  -v "${HOST_DIR}:/workspace:ro" \
+  -v "${ROOT_DIR}:/workspace:ro" \
   -w /workspace \
   "${PYTHON_IMAGE}" \
   sh -lc "
