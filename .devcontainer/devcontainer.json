@@ -21,10 +21,8 @@
   "runArgs": [
     "--gpus",
     "all",
-    "--add-host",
-    "host.docker.internal:host-gateway",
     "--env-file",
-    ".env"
+    ".devcontainer/.env"
   ],
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "updateContentCommand": "bash .devcontainer/post-create.sh",
@@ -51,19 +49,6 @@
         "github.vscode-github-actions",
         "openai.chatgpt"
       ]
-    }
-  },
-  "hostRequirements": {
-    "cpus": 4,
-    "memory": "4gb",
-    "storage": "32gb"
-  },
-  "forwardPorts": [
-    8000
-  ],
-  "portsAttributes": {
-    "8000": {
-      "label": "wrist-audio-pipeline"
     }
   }
 }
