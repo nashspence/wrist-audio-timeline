@@ -1,6 +1,6 @@
 # Schema Specification
 
-This document is normative for schema version `v1.0.0-alpha.1`.
+This document is normative for schema version `v1.0.0-alpha.2`.
 
 Unless noted otherwise, the requirements below apply to both the canonical exchange schema in `schema.py` and the PostgreSQL persistence schema in `schema.sql`.
 
@@ -23,6 +23,8 @@ The core model is intentionally modality-extensible. Future modalities MAY be ad
 
 `schema.sql` defines a normalized persistence projection of the same semantics.
 
+This document defines canonical data semantics. Pipeline sequencing, service orchestration, and operational skip behavior belong in `API_PLANNING.md`.
+
 When the persistence schema decomposes nested collections into child tables, implementations MUST preserve the same meaning as the canonical schema rather than inventing storage-specific semantics.
 
 ## 3. Root records
@@ -42,8 +44,6 @@ Timeline-object families apply only to timeline objects. Root records MUST NOT b
 - Relative offsets remain authoritative.
 - Wall-clock estimates MUST be treated as informational only.
 - A primary wall-clock estimate MAY be designated.
-
-In the persistence schema, `CaptureSession.wall_clock_start` maps to the `session_wall_clock_candidate` row where `is_primary = true`.
 
 ### Sensor stream
 
@@ -83,6 +83,18 @@ The family definitions are:
 
 Implementations MUST preserve this distinction. Derived objects MUST NOT be used as a substitute for fusion outputs, and fusion outputs MUST NOT be treated as raw evidence.
 
+The canonical evidence layer includes both broad upstream passes and targeted evidence refinements. For the current audio phase, the canonical targeted evidence kinds are:
+
+- `audio_asr_correction_evidence`
+- `audio_speaker_identification_evidence`
+- `audio_emotion_window_evidence`
+- `audio_emotion_segment_evidence`
+- `audio_query_conditioned_sound_evidence`
+- `audio_text_corpus_match_evidence`
+- `audio_song_identification_evidence`
+
+These remain `evidence` objects, not `derived` or `fusion` objects. They MUST be emitted only for upstream-surfaced candidate intervals or targeted queries rather than as unconstrained whole-session scans. Negative or no-op attempts are not canonical evidence objects.
+
 ## 5. Time model
 
 All core timing logic MUST use relative time.
@@ -96,8 +108,6 @@ Every timeline object MUST carry an explicit `timebase`.
 - `clock_source` identifies how the relative time should be interpreted.
 - `reference_stream_id`, when present, MUST point to a known stream in the same session.
 - `alignment_uncertainty_ms`, when present, MUST be non-negative.
-
-The persistence schema MUST retain the timebase fields on `timeline_object`.
 
 ## 6. Grids
 
@@ -131,6 +141,8 @@ Primary lineage uses:
 
 Role-specific links such as `word_refs`, `applies_to`, `supporting_objects`, `left_object`, `right_object`, and `context_segment` MAY add structure, but they MUST NOT replace primary lineage.
 
+Targeted evidence refinements MUST point back to the upstream evidence they refine or resolve by typed `ObjectRef` links, typically through `applies_to`-style fields. When `expected_kind` or `expected_family` is known, implementations SHOULD set it. Query-conditioned evidence MAY also carry typed `ArtifactRef` links to supporting query artifacts.
+
 ## 8. Payload and metadata separation
 
 The schema distinguishes between several different kinds of payload detail:
@@ -146,6 +158,13 @@ Implementations MUST keep these concerns separate.
 - Values that describe execution details SHOULD live in `service_metadata`.
 - Large raw outputs SHOULD be stored as artifacts.
 - `attributes` MUST NOT be used as a catch-all replacement for the more specific fields above.
+
+For targeted evidence refinements:
+
+- in the exchange schema, compact canonical findings such as query strings, media kinds, titles, attributions, or external identifiers SHOULD live in payloads
+- service-native trace values MAY also be retained in `native_outputs` when useful for debugging or replay
+- execution details such as index version, retrieval mode, or gating thresholds SHOULD live in `service_metadata`
+- large hit lists, raw probe traces, or full retrieval dumps SHOULD be stored as artifacts
 
 ## 9. Confidence and quality
 
@@ -173,6 +192,7 @@ Reserved usability keys:
 - `emotion`
 - `sound_event`
 - `acoustic_scene`
+- `media`
 - `overall`
 
 Absent quality metrics SHOULD be omitted rather than emitted as null-valued entries.
@@ -192,6 +212,8 @@ Its payload SHOULD stay structurally aligned with broad audio-context evidence w
 
 `FusedInterval` is the canonical fusion object for durable downstream interpretation.
 
+When sufficient supporting evidence exists, `FusedInterval` MAY summarize media-related interpretation such as whether playback is present, a normalized media kind, a title or program label, primary attribution, and identification confidence. The summary is intentionally generic enough to cover songs, movies, television, radio, and similar mediated playback. That fusion summary MUST remain downstream of evidence and MUST NOT replace the underlying evidence objects or their lineage.
+
 Convenience references stored inside nested payloads, such as transcript word refs or a linked context segment, MUST still obey the same typed-reference and lineage rules as any other object link.
 
 ## 11. Persistence mapping
@@ -205,6 +227,10 @@ The following mappings are required:
 - notes and tags map to child tables
 - `Artifact.stream_refs` maps to `artifact_stream_ref`
 - object `timebase` maps to `timeline_object` timebase columns
+- targeted evidence `applies_to` links map to `object_ref`
+- targeted evidence query artifact links map to `object_artifact_ref`
+- compact targeted evidence payload fields MAY be normalized into subtype tables or equivalent generic timeline-object property storage, but implementations MUST preserve the same payload semantics and MUST NOT duplicate them inconsistently across storage locations
+- fusion-level media summary, when present, maps to `fused_interval` media columns
 - `CaptureSession.wall_clock_start` maps to the primary `session_wall_clock_candidate`
 
 When a canonical structure is normalized into multiple tables, implementations MUST preserve the same semantics and constraints.
@@ -233,5 +259,6 @@ That extension SHOULD happen by:
 - adding new subtype or payload tables
 - adding new modality-specific object kinds
 - adding new grids or vocabularies when needed
+- adding new evidence payloads and fusion summaries when a new service contributes semantically distinct information
 
 It MUST NOT happen by weakening the current audio contract into an untyped or modality-ambiguous shape.

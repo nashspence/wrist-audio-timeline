@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-SCHEMA_VERSION = "v1.0.0-alpha.1"
+SCHEMA_VERSION = "v1.0.0-alpha.2"
 
 
 # ============================================================
@@ -45,6 +45,7 @@ QUALITY_USABILITY_KEYS: set[str] = {
     "emotion",
     "sound_event",
     "acoustic_scene",
+    "media",
     "overall",
 }
 
@@ -311,6 +312,18 @@ class ObjectRef(StrictBaseModel):
     relation: str | None = None
     expected_kind: str | None = None
     expected_family: TimelineObjectFamily | None = None
+
+
+class TargetedEvidencePayload(StrictBaseModel):
+    applies_to: list[ObjectRef] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_applies_to(self) -> "TargetedEvidencePayload":
+        if not self.applies_to:
+            raise ValueError(
+                "targeted evidence requires at least one applies_to object reference"
+            )
+        return self
 
 
 class WallClockEstimate(StrictBaseModel):
@@ -604,11 +617,18 @@ class AsrSegmentPayload(StrictBaseModel):
     speaker_label: str | None = None
 
 
-class AsrCorrectionPayload(StrictBaseModel):
+class AsrCorrectionPayload(TargetedEvidencePayload):
     original_text: str
     corrected_text: str
     correction_type: CorrectionType
-    applies_to: list[ObjectRef] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_material_change(self) -> "AsrCorrectionPayload":
+        if self.corrected_text == self.original_text:
+            raise ValueError(
+                "correction evidence requires corrected_text to differ from original_text"
+            )
+        return self
 
 
 class DiarizationSegmentPayload(StrictBaseModel):
@@ -616,30 +636,115 @@ class DiarizationSegmentPayload(StrictBaseModel):
     overlap: bool = False
 
 
-class SpeakerIdentificationPayload(StrictBaseModel):
+class SpeakerIdentificationPayload(TargetedEvidencePayload):
     speaker_label: str
-    speaker_identity: str | None = None
+    speaker_identity: str
 
 
-class EmotionWindowPayload(StrictBaseModel):
+class EmotionWindowPayload(TargetedEvidencePayload):
     categorical: list[TagScore] = Field(default_factory=list)
     arousal: float | None = None
     valence: float | None = None
     dominance: float | None = None
     speaker_label: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_affect_signal(self) -> "EmotionWindowPayload":
+        if (
+            not self.categorical
+            and self.arousal is None
+            and self.valence is None
+            and self.dominance is None
+        ):
+            raise ValueError(
+                "emotion evidence requires at least one affect estimate or tag"
+            )
+        return self
 
-class EmotionSegmentPayload(StrictBaseModel):
+
+class EmotionSegmentPayload(TargetedEvidencePayload):
     label: str | None = None
     arousal_mean: float | None = None
     valence_mean: float | None = None
     dominance_mean: float | None = None
     speaker_label: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_affect_signal(self) -> "EmotionSegmentPayload":
+        if (
+            self.label is None
+            and self.arousal_mean is None
+            and self.valence_mean is None
+            and self.dominance_mean is None
+        ):
+            raise ValueError(
+                "emotion evidence requires at least one affect estimate or label"
+            )
+        return self
+
 
 class SoundEventSegmentPayload(StrictBaseModel):
     event_label: str
     event_score: UnitScore | None = None
+
+
+class QueryConditionedSoundPayload(TargetedEvidencePayload):
+    query_text: str | None = None
+    query_artifact_ref: ArtifactRef | None = None
+    detected_label: str | None = None
+    detection_score: UnitScore | None = None
+
+    @model_validator(mode="after")
+    def _validate_query_source(self) -> "QueryConditionedSoundPayload":
+        if self.query_text is None and self.query_artifact_ref is None:
+            raise ValueError(
+                "query_text or query_artifact_ref is required for query-conditioned sound evidence"
+            )
+        return self
+
+
+class TextCorpusMatchPayload(TargetedEvidencePayload):
+    query_text: str
+    corpus_name: str
+    candidate_external_id: str | None = None
+    candidate_media_kind: str | None = None
+    candidate_title: str | None = None
+    candidate_attribution: str | None = None
+    matched_text: str | None = None
+    match_score: UnitScore | None = None
+
+    @model_validator(mode="after")
+    def _validate_candidate_detail(self) -> "TextCorpusMatchPayload":
+        if (
+            self.candidate_external_id is None
+            and self.candidate_media_kind is None
+            and self.candidate_title is None
+            and self.candidate_attribution is None
+            and self.matched_text is None
+        ):
+            raise ValueError(
+                "text-corpus match evidence requires at least one candidate descriptor"
+            )
+        return self
+
+
+class SongIdentificationPayload(TargetedEvidencePayload):
+    recording_title: str | None = None
+    recording_artist: str | None = None
+    recording_external_id: str | None = None
+    fingerprint_confidence: UnitScore | None = None
+
+    @model_validator(mode="after")
+    def _validate_identified_recording(self) -> "SongIdentificationPayload":
+        if (
+            self.recording_title is None
+            and self.recording_artist is None
+            and self.recording_external_id is None
+        ):
+            raise ValueError(
+                "song identification evidence requires an identified recording"
+            )
+        return self
 
 
 class AudioAsrWordEvidence(EvidenceBase):
@@ -679,11 +784,17 @@ class AudioSpeakerIdentificationEvidence(EvidenceBase):
     modality: Literal[Modality.AUDIO] = Modality.AUDIO
     payload: SpeakerIdentificationPayload
 
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
+
 
 class AudioEmotionWindowEvidence(EvidenceBase):
     kind: Literal["audio_emotion_window_evidence"] = "audio_emotion_window_evidence"
     modality: Literal[Modality.AUDIO] = Modality.AUDIO
     payload: EmotionWindowPayload
+
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
 
 
 class AudioEmotionSegmentEvidence(EvidenceBase):
@@ -691,11 +802,51 @@ class AudioEmotionSegmentEvidence(EvidenceBase):
     modality: Literal[Modality.AUDIO] = Modality.AUDIO
     payload: EmotionSegmentPayload
 
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
+
 
 class AudioSoundEventSegmentEvidence(EvidenceBase):
     kind: Literal["audio_sound_event_segment_evidence"] = "audio_sound_event_segment_evidence"
     modality: Literal[Modality.AUDIO] = Modality.AUDIO
     payload: SoundEventSegmentPayload
+
+
+class AudioQueryConditionedSoundEvidence(EvidenceBase):
+    kind: Literal["audio_query_conditioned_sound_evidence"] = (
+        "audio_query_conditioned_sound_evidence"
+    )
+    modality: Literal[Modality.AUDIO] = Modality.AUDIO
+    payload: QueryConditionedSoundPayload
+
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
+
+    def outbound_artifact_refs(self) -> list[ArtifactRef]:
+        refs = [*super().outbound_artifact_refs()]
+        if self.payload.query_artifact_ref is not None:
+            refs.append(self.payload.query_artifact_ref)
+        return refs
+
+
+class AudioTextCorpusMatchEvidence(EvidenceBase):
+    kind: Literal["audio_text_corpus_match_evidence"] = "audio_text_corpus_match_evidence"
+    modality: Literal[Modality.AUDIO] = Modality.AUDIO
+    payload: TextCorpusMatchPayload
+
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
+
+
+class AudioSongIdentificationEvidence(EvidenceBase):
+    kind: Literal["audio_song_identification_evidence"] = (
+        "audio_song_identification_evidence"
+    )
+    modality: Literal[Modality.AUDIO] = Modality.AUDIO
+    payload: SongIdentificationPayload
+
+    def outbound_object_refs(self) -> list[ObjectRef]:
+        return [*super().outbound_object_refs(), *self.payload.applies_to]
 
 
 # ============================================================
@@ -829,6 +980,38 @@ class AudioQualitySummary(StrictBaseModel):
     low_confidence_fraction: UnitScore | None = None
 
 
+class MediaSummary(StrictBaseModel):
+    present: bool | None = None
+    media_kind: str | None = None
+    title: str | None = None
+    primary_attribution: str | None = None
+    identification_confidence: UnitScore | None = None
+
+    @model_validator(mode="after")
+    def _validate_media_summary(self) -> "MediaSummary":
+        has_descriptor = any(
+            value is not None
+            for value in (self.media_kind, self.title, self.primary_attribution)
+        )
+        if self.present is True and not has_descriptor:
+            raise ValueError(
+                "media summary with present=true requires at least one descriptor"
+            )
+        if self.present is False and any(
+            value is not None
+            for value in (
+                self.media_kind,
+                self.title,
+                self.primary_attribution,
+                self.identification_confidence,
+            )
+        ):
+            raise ValueError(
+                "media summary with present=false must not carry identification fields"
+            )
+        return self
+
+
 class FusionNarrative(StrictBaseModel):
     summary: str | None = None
     uncertainty_notes: list[str] = Field(default_factory=list)
@@ -848,6 +1031,7 @@ class FusedInterval(FusionBase):
     transcript: TranscriptSummary = Field(default_factory=TranscriptSummary)
     emotion: EmotionSummary = Field(default_factory=EmotionSummary)
     sound_events: SoundEventSummary = Field(default_factory=SoundEventSummary)
+    media: MediaSummary = Field(default_factory=MediaSummary)
 
     context_segment: ObjectRef | None = None
     quality: AudioQualitySummary = Field(default_factory=AudioQualitySummary)
@@ -876,6 +1060,9 @@ TimelineObject = Annotated[
     | AudioEmotionWindowEvidence
     | AudioEmotionSegmentEvidence
     | AudioSoundEventSegmentEvidence
+    | AudioQueryConditionedSoundEvidence
+    | AudioTextCorpusMatchEvidence
+    | AudioSongIdentificationEvidence
     | ContextSegment
     | ContextChangeMarker
     | QualityBin

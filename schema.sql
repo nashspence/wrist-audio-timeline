@@ -1,4 +1,5 @@
 -- Normalized PostgreSQL persistence schema for the wrist-audio timeline model.
+-- Canonical semantics are defined in SCHEMA.md and expressed in the exchange model in schema.py.
 --
 -- Design goals:
 -- 1) Keep the runtime scope audio-focused now, while leaving the relational core easy to extend.
@@ -254,7 +255,7 @@ create table if not exists grid_definition (
 
 create table if not exists capture_session (
     session_id text primary key,
-    schema_version text not null default 'v1.0.0-alpha.1',
+    schema_version text not null default 'v1.0.0-alpha.2',
     duration_s positive_double,
     wearer_id text,
     session_timezone text,
@@ -312,7 +313,7 @@ create table if not exists session_wall_clock_candidate_artifact_ref (
 create table if not exists sensor_stream (
     session_id text not null,
     stream_id text not null,
-    schema_version text not null default 'v1.0.0-alpha.1',
+    schema_version text not null default 'v1.0.0-alpha.2',
     stream_kind_code text not null,
     name text,
     duration_s positive_double,
@@ -371,7 +372,7 @@ create table if not exists audio_stream (
 create table if not exists artifact (
     session_id text not null,
     artifact_id text not null,
-    schema_version text not null default 'v1.0.0-alpha.1',
+    schema_version text not null default 'v1.0.0-alpha.2',
     modality_code text not null,
     artifact_role_code text not null,
     uri text not null,
@@ -470,7 +471,7 @@ create table if not exists audio_artifact_profile (
 create table if not exists timeline_object (
     session_id text not null,
     object_id text not null,
-    schema_version text not null default 'v1.0.0-alpha.1',
+    schema_version text not null default 'v1.0.0-alpha.2',
     kind_code text not null,
     source_service text not null,
     source_model text,
@@ -822,6 +823,11 @@ create table if not exists fused_interval (
     emotion_arousal_mean double precision,
     emotion_valence_mean double precision,
     emotion_dominance_mean double precision,
+    media_present boolean,
+    media_kind text,
+    media_title text,
+    media_primary_attribution text,
+    media_identification_confidence unit_score,
     quality_avg_rms_dbfs double precision,
     quality_avg_estimated_snr_db double precision,
     quality_overlap_fraction unit_score,
@@ -833,6 +839,9 @@ create table if not exists fused_interval (
         setweight(to_tsvector('simple', coalesce(transcript_corrected_text, transcript_text, '')), 'A')
         || setweight(to_tsvector('simple', coalesce(narrative_summary, '')), 'B')
         || setweight(to_tsvector('simple', coalesce(speaker_identity, speaker_label, '')), 'C')
+        || setweight(to_tsvector('simple', coalesce(media_title, '')), 'C')
+        || setweight(to_tsvector('simple', coalesce(media_primary_attribution, '')), 'C')
+        || setweight(to_tsvector('simple', coalesce(media_kind, '')), 'D')
     ) stored,
     primary key (session_id, object_id),
     foreign key (session_id, object_id)
@@ -1278,6 +1287,7 @@ insert into quality_usability_definition (usability_code, description, modality_
     ('emotion', 'Usability for emotion inference', 'audio', true),
     ('sound_event', 'Usability for sound-event interpretation', 'audio', true),
     ('acoustic_scene', 'Usability for acoustic-scene interpretation', 'audio', true),
+    ('media', 'Usability for media and playback interpretation', 'audio', true),
     ('overall', 'Overall usability for downstream interpretation', 'audio', true)
 on conflict (usability_code) do nothing;
 
@@ -1292,6 +1302,9 @@ insert into object_kind (kind_code, family, modality_code, is_durable, payload_t
     ('audio_emotion_window_evidence', 'evidence', 'audio', false, null, 'Emotion evidence over a window'),
     ('audio_emotion_segment_evidence', 'evidence', 'audio', false, null, 'Emotion evidence over a segment'),
     ('audio_sound_event_segment_evidence', 'evidence', 'audio', false, null, 'Sound-event segment evidence'),
+    ('audio_query_conditioned_sound_evidence', 'evidence', 'audio', false, null, 'Query-conditioned sound refinement evidence'),
+    ('audio_text_corpus_match_evidence', 'evidence', 'audio', false, null, 'Text-corpus match evidence for media refinement'),
+    ('audio_song_identification_evidence', 'evidence', 'audio', false, null, 'Song identification evidence'),
     ('context_segment', 'derived', 'audio', true, 'context_segment', 'Derived context segment'),
     ('context_change_marker', 'derived', 'audio', true, 'context_change_marker', 'Derived context-change marker'),
     ('quality_bin', 'derived', 'audio', true, 'quality_bin', 'Derived quality and usability bin'),
@@ -1426,6 +1439,11 @@ select
     fi.transcript_text,
     fi.transcript_corrected_text,
     fi.emotion_label,
+    fi.media_present,
+    fi.media_kind,
+    fi.media_title,
+    fi.media_primary_attribution,
+    fi.media_identification_confidence,
     fi.narrative_summary,
     fi.review_worthy,
     fi.annotation_worthy,
@@ -1461,5 +1479,8 @@ join quality_bin qb
 --    `is_primary = true` when a primary wall-clock estimate is persisted.
 -- 4) Additional modalities, stream kinds, artifact formats, object kinds, quality vocabularies,
 --    and grids are added by inserting catalog rows plus new subtype/payload tables as needed.
--- 5) If timeline_object or artifact grows very large, use declarative partitioning by session or
+-- 5) Canonical targeted evidence kinds may persist compact payload fields through dedicated payload
+--    tables or equivalent generic timeline-object property storage, but typed object/artifact
+--    links must still flow through object_ref and object_artifact_ref.
+-- 6) If timeline_object or artifact grows very large, use declarative partitioning by session or
 --    time window at the table level; the normalized catalog/core model remains unchanged.
